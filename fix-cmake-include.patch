@@ -1,0 +1,41 @@
+diff -up llvm-3.8.0rc2.src/CMakeLists.txt.fixinc llvm-3.8.0rc2.src/CMakeLists.txt
+--- llvm-3.8.0rc2.src/CMakeLists.txt.fixinc	2016-01-14 05:03:44.000000000 +1000
++++ llvm-3.8.0rc2.src/CMakeLists.txt	2016-02-26 10:21:44.477295728 +1000
+@@ -192,6 +192,7 @@ else()
+ endif()
+ 
+ # Each of them corresponds to llvm-config's.
++#
+ set(LLVM_TOOLS_BINARY_DIR ${LLVM_RUNTIME_OUTPUT_INTDIR}) # --bindir
+ set(LLVM_LIBRARY_DIR      ${LLVM_LIBRARY_OUTPUT_INTDIR}) # --libdir
+ set(LLVM_MAIN_SRC_DIR     ${CMAKE_CURRENT_SOURCE_DIR}  ) # --src-root
+@@ -558,6 +559,11 @@ set( CMAKE_RUNTIME_OUTPUT_DIRECTORY ${LL
+ set( CMAKE_LIBRARY_OUTPUT_DIRECTORY ${LLVM_BINARY_DIR}/lib${LLVM_LIBDIR_SUFFIX} )
+ set( CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${LLVM_BINARY_DIR}/lib${LLVM_LIBDIR_SUFFIX} )
+ 
++if(INCLUDE_INSTALL_DIR)
++else()
++set(INCLUDE_INSTALL_DIR ${CMAKE_INSTALL_PREFIX}/include)
++endif()
++
+ set(CMAKE_BUILD_WITH_INSTALL_RPATH ON)
+ if (APPLE)
+   set(CMAKE_INSTALL_NAME_DIR "@rpath")
+@@ -728,7 +734,7 @@ add_subdirectory(cmake/modules)
+ 
+ if (NOT LLVM_INSTALL_TOOLCHAIN_ONLY)
+   install(DIRECTORY include/llvm include/llvm-c
+-    DESTINATION include
++    DESTINATION "${INCLUDE_INSTALL_DIR}"
+     COMPONENT llvm-headers
+     FILES_MATCHING
+     PATTERN "*.def"
+@@ -740,7 +746,7 @@ if (NOT LLVM_INSTALL_TOOLCHAIN_ONLY)
+     )
+ 
+   install(DIRECTORY ${LLVM_INCLUDE_DIR}/llvm
+-    DESTINATION include
++    DESTINATION "${INCLUDE_INSTALL_DIR}"
+     COMPONENT llvm-headers
+     FILES_MATCHING
+     PATTERN "*.def"

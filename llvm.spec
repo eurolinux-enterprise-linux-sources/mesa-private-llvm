@@ -1,3 +1,10 @@
+# Components enabled if supported by target architecture:
+%ifarch %ix86 x86_64
+  %bcond_without gold
+%else
+  %bcond_with gold
+%endif
+
 %if 0%{?rhel} == 6
 %define rhel6 1
 %endif
@@ -6,45 +13,50 @@
 # consequently we build swrast on them instead of llvmpipe.
 ExcludeArch: ppc s390 %{?rhel6:s390x}
 
-#global svndate 20131023
-#global prerel rc4
+%ifarch s390x
+%global host_target SystemZ
+%endif
+%ifarch ppc64 ppc64le
+%global host_target PowerPC
+%endif
+%ifarch %ix86 x86_64
+%global host_target X86
+%endif
+%ifarch aarch64
+%global host_target AArch64
+%endif
+%ifarch %{arm}
+%global host_target ARM
+%endif
 
-Name:           mesa-private-llvm
-Version:        3.6.2
-Release:        2%{?prerel:.%prerel}%{?dist}
-Summary:        llvm engine for Mesa
+%ifnarch s390x
+%global amdgpu ;AMDGPU
+%endif
 
-Group:		System Environment/Libraries
-License:        NCSA
-URL:            http://llvm.org/
-Source0:	http://llvm.org/releases/%{version}/%{?prerel}/llvm-%{version}%{?prerel}.src.tar.xz
-#Source0:	llvm-%{svndate}.tar.xz
-Source1:	make-llvm-snapshot.sh
-# multilib fixes
-Source2:        llvm-Config-config.h
-Source3:        llvm-Config-llvm-config.h
+Name:		mesa-private-llvm
+Version:	3.8.1
+Release:	1%{?dist}
+Summary:	llvm engine for Mesa
 
-# Data files should be installed with timestamps preserved
-Patch0:         llvm-2.6-timestamp.patch
+Group:          System Environment/Libraries
+License:	NCSA
+URL:		http://llvm.org
+Source0:	http://llvm.org/releases/%{version}/llvm-%{version}.src.tar.xz
+Source100:	llvm-config.h
 
-# llvm Z13 backports (#1182150)
-Patch1: llvm-z13-backports.patch
-Patch2: llvm-3.6-large-struct-return.patch
+# recognize s390 as SystemZ when configuring build
+#Patch0:		llvm-3.7.1-cmake-s390.patch
 
-# llvm aarch64 bug fix (#1254386)
-Patch10: 0001-AArch64-Fix-invalid-use-of-references-to-BuildMI.patch
-# add model detection for skylake and broadwell
-Patch11: llvm-3.6.2-nerf-skylake.patch
+Patch1: fix-cmake-include.patch
+Patch2: llvm-3.8.1-rhel-7.3.patch
 
-BuildRequires:  bison
-BuildRequires:  chrpath
-BuildRequires:  flex
-BuildRequires:  gcc-c++ >= 3.4
-BuildRequires:  groff
-BuildRequires:  libtool-ltdl-devel
-BuildRequires:  zip
-# for DejaGNU test suite
-BuildRequires:  dejagnu tcl-devel python
+BuildRequires:	cmake
+BuildRequires:	zlib-devel
+%if %{with gold}
+BuildRequires:  binutils-devel
+%endif
+BuildRequires:  libstdc++-static
+BuildRequires:  python
 
 %description
 This package contains the LLVM-based runtime support for Mesa.  It is not a
@@ -52,98 +64,87 @@ fully-featured build of LLVM, and use by any package other than Mesa is not
 supported.
 
 %package devel
-Summary:        Libraries and header files for Mesa's llvm engine
-Group:          Development/Libraries
-Requires:       %{name}%{?_isa} = %{version}-%{release}
-Requires:       libstdc++-devel >= 3.4
+Summary:	Libraries and header files for LLVM
+Requires:	%{name}%{?_isa} = %{version}-%{release}
 
 %description devel
 This package contains library and header files needed to build the LLVM
 support in Mesa.
 
 %prep
-%setup -q -n llvm-%{version}%{?prerel}.src
-rm -r -f tools/clang
-
-# llvm patches
-%patch0 -p1 -b .timestamp
-%patch1 -p1 -b .z13
-%patch2 -p1 -b .large-struct
-%patch10 -p1 -b .aarch64-fix
-%patch11 -p1 -b .skl-fix
-
-# fix ld search path
-sed -i 's|/lib /usr/lib $lt_ld_extra|%{_libdir} $lt_ld_extra|' \
-    ./configure
-
-# mangle the library name
-sed -i 's|^LLVM_VERSION_SUFFIX=|&-mesa|' ./configure
-
-%ifnarch s390x
-%define r600 ,r600
-%endif
+%setup -q -n llvm-%{version}.src
+#patch0 -p1 -b .s390
+%patch1 -p1 -b .fixinc
+%patch2 -p1
 
 %build
-export CC=gcc
-export CXX=g++
-%configure \
-  --prefix=%{_prefix} \
-  --libdir=%{_libdir} \
-  --includedir=%{_includedir}/mesa-private \
-  --with-extra-ld-options=-Wl,-Bsymbolic,--default-symver \
-  --enable-targets=host%{?r600} \
-  --enable-bindings=none \
-  --enable-debug-runtime \
-  --enable-jit \
-  --enable-shared \
-  --enable-optimized \
-  --disable-clang-arcmt \
-  --disable-clang-static-analyzer \
-  --disable-clang-rewriter \
-  --disable-assertions \
-  --disable-docs \
-  --disable-libffi \
-  --disable-terminfo \
-  --disable-timestamps \
-  %{nil}
 
-# FIXME file this
-# configure does not properly specify libdir or includedir
-sed -i 's|(PROJ_prefix)/lib|(PROJ_prefix)/%{_lib}|g' Makefile.config
-sed -i 's|(PROJ_prefix)/include|&/mesa-private|g' Makefile.config
-#sed -i 's|LLVM_VERSION_SUFFIX := |& -mesa|g' Makefile.config
-
-# FIXME upstream need to fix this
-# llvm-config.cpp hardcodes lib in it
-sed -i 's|ActiveLibDir = ActivePrefix + "/lib"|ActiveLibDir = ActivePrefix + "/%{_lib}"|g' tools/llvm-config/llvm-config.cpp
 sed -i 's|ActiveIncludeDir = ActivePrefix + "/include|&/mesa-private|g' tools/llvm-config/llvm-config.cpp
 
-make %{_smp_mflags} VERBOSE=1 OPTIMIZE_OPTION="%{optflags} -fno-strict-aliasing"
+mkdir -p _build
+cd _build
+
+# force off shared libs as cmake macros turns it on.
+%cmake .. \
+	-DINCLUDE_INSTALL_DIR=%{_includedir}/mesa-private \
+	-DLLVM_VERSION_SUFFIX="-mesa" \
+	-DBUILD_SHARED_LIBS:BOOL=OFF \
+	-DCMAKE_BUILD_TYPE=RelWithDebInfo \
+	-DCMAKE_SHARED_LINKER_FLAGS="-Wl,-Bsymbolic -static-libstdc++" \
+%if 0%{?__isa_bits} == 64
+	-DLLVM_LIBDIR_SUFFIX=64 \
+%else
+	-DLLVM_LIBDIR_SUFFIX= \
+%endif
+	\
+	-DLLVM_TARGETS_TO_BUILD="%{host_target}%{?amdgpu}" \
+	-DLLVM_ENABLE_LIBCXX:BOOL=OFF \
+	-DLLVM_ENABLE_ZLIB:BOOL=ON \
+	-DLLVM_ENABLE_FFI:BOOL=OFF \
+	-DLLVM_ENABLE_RTTI:BOOL=OFF \
+%if %{with gold}
+	-DLLVM_BINUTILS_INCDIR=%{_includedir} \
+%endif
+	\
+	-DLLVM_BUILD_RUNTIME:BOOL=ON \
+	\
+	-DLLVM_INCLUDE_TOOLS:BOOL=ON \
+	-DLLVM_BUILD_TOOLS:BOOL=ON \
+	\
+	-DLLVM_INCLUDE_TESTS:BOOL=ON \
+	-DLLVM_BUILD_TESTS:BOOL=ON \
+	\
+	-DLLVM_INCLUDE_EXAMPLES:BOOL=OFF \
+	-DLLVM_BUILD_EXAMPLES:BOOL=OFF \
+	\
+	-DLLVM_INCLUDE_UTILS:BOOL=ON \
+	-DLLVM_INSTALL_UTILS:BOOL=OFF \
+	\
+	-DLLVM_INCLUDE_DOCS:BOOL=OFF \
+	-DLLVM_BUILD_DOCS:BOOL=OFF \
+	-DLLVM_ENABLE_SPHINX:BOOL=OFF \
+	-DLLVM_ENABLE_DOXYGEN:BOOL=OFF \
+	\
+	-DLLVM_BUILD_LLVM_DYLIB:BOOL=ON \
+	-DLLVM_DYLIB_EXPORT_ALL:BOOL=ON \
+	-DLLVM_LINK_LLVM_DYLIB:BOOL=ON \
+	-DLLVM_BUILD_EXTERNAL_COMPILER_RT:BOOL=ON \
+	-DLLVM_INSTALL_TOOLCHAIN_ONLY:BOOL=OFF
+
+make %{?_smp_mflags} VERBOSE=1
 
 %install
+cd _build
 make install DESTDIR=%{buildroot}
 
-# rename the few binaries we're keeping
-mv %{buildroot}%{_bindir}/llvm-config %{buildroot}%{_bindir}/%{name}-config-%{__isa_bits}
-
-pushd %{buildroot}%{_includedir}/mesa-private/llvm/Config
-mv config.h config-%{__isa_bits}.h
-cp -p %{SOURCE2} config.h
-mv llvm-config.h llvm-config-%{__isa_bits}.h
-cp -p %{SOURCE3} llvm-config.h
-popd
-
-file %{buildroot}/%{_bindir}/* %{buildroot}/%{bindir}/*.so | \
-    awk -F: '$2~/ELF/{print $1}' | \
-    xargs -r chrpath -d
-
-# FIXME file this bug
-sed -i 's,ABS_RUN_DIR/lib",ABS_RUN_DIR/%{_lib}/%{name}",' \
-  %{buildroot}%{_bindir}/%{name}-config-%{__isa_bits}
+# fix multi-lib
+mv -v %{buildroot}%{_bindir}/llvm-config %{buildroot}%{_bindir}/%{name}-config-%{__isa_bits}
+mv -v %{buildroot}%{_includedir}/mesa-private/llvm/Config/llvm-config{,-%{__isa_bits}}.h
+install -m 0644 %{SOURCE100} %{buildroot}%{_includedir}/mesa-private/llvm/Config/llvm-config.h
 
 rm -f %{buildroot}%{_libdir}/*.a
 
-rm -f %{buildroot}%{_libdir}/libLLVM-%{version}.so
+rm -f %{buildroot}%{_libdir}/libLLVM.so
 
 # remove documentation makefiles:
 # they require the build directory to work
@@ -155,103 +156,74 @@ ls %{buildroot}%{_libdir}/* | grep -v libLLVM | xargs rm -f
 rm -rf %{buildroot}%{_mandir}/man1
 
 # RHEL: Strip out some headers Mesa doesn't need
-rm -rf %{buildroot}%{_includedir}/mesa-private/llvm/{Analysis,Assembly}
-rm -rf %{buildroot}%{_includedir}/mesa-private/llvm/{DebugInfo,Option}
+rm -rf %{buildroot}%{_includedir}/mesa-private/llvm/{Assembly}
+rm -rf %{buildroot}%{_includedir}/mesa-private/llvm/Option
 rm -rf %{buildroot}%{_includedir}/mesa-private/llvm/TableGen
+rm -rf %{buildroot}%{_includedir}/llvm-c/lto.h
 
 # RHEL: Strip out cmake build foo
 rm -rf %{buildroot}%{_datadir}/llvm/cmake
 
 %check
-# the Koji build server does not seem to have enough RAM
-# for the default 16 threads
-
-# just log the results, don't fail the build
-make check LIT_ARGS="-v -j4" | tee llvm-testlog-%{_arch}.txt
+cd _build
+# 3.8.1 note: skx failures are XFAIL. the skylake backport does not wire
+# up AVX512 for skylake, but the tests are from code that expects that.
+# safe to ignore.
+make check-all || :
 
 %post -p /sbin/ldconfig
 %postun -p /sbin/ldconfig
 
 %files
-%defattr(-,root,root,-)
 %doc LICENSE.TXT
-%{_libdir}/libLLVM-3.6-mesa.so
+%{_libdir}/libLLVM-3.8*-mesa.so
 
 %files devel
-%defattr(-,root,root,-)
 %{_bindir}/%{name}-config-%{__isa_bits}
 %{_includedir}/mesa-private/llvm
 %{_includedir}/mesa-private/llvm-c
 
 %changelog
-* Wed Oct 14 2015 Adam Jackson <ajax@redhat.com> 3.6.2-2
-- Teach CPU detection about Skylake/Broadwell, treat them like Haswell
+* Wed Jul 13 2016 Adam Jackson <ajax@redhat.com> - 3.8.1-1
+- Update to 3.8.1
+- Sync some x86 getHostCPUName updates from trunk
 
-* Mon Aug 24 2015 Dave Airlie <airlied@redhat.com> 3.6.2-1
-- fix aarch64 bugs via 3.6.2 + patch
+* Tue Jun 14 2016 Dave Airlie <airlied@redhat.com> - 3.8.0-2
+- drop private cmake build
 
-* Tue Aug 18 2015 Adam Jackson <ajax@redhat.com> 3.6.1-2
-- Fix large struct return on s390
+* Thu Mar 10 2016 Dave Airlie <airlied@redhat.com> 3.8.0-1
+- llvm 3.8.0 final release
 
-* Tue May 26 2015 Dave Airlie <airlied@redhat.com> 3.6.1-1
-- rebase to llvm 3.6.1
+* Thu Mar 03 2016 Dave Airlie <airlied@redhat.com> 3.8.0-0.2
+- llvm 3.8.0 rc3 release
 
-* Thu May 21 2015 Dave Airlie <airlied@redhat.com> 3.6.0-3
-- backport llvm z13 support from IBM
+* Fri Feb 19 2016 Dave Airlie <airlied@redhat.com> 3.8.0-0.1
+- llvm 3.8.0 rc2 release
 
-* Wed May 13 2015 Dave Airlie <airlied@redhat.com> 3.6.0-2
-- mesa needs Object headers now.
+* Tue Feb 16 2016 Dan Horák <dan[at][danny.cz> 3.7.1-7
+- recognize s390 as SystemZ when configuring build
 
-* Wed May 13 2015 Dave Airlie <airlied@redhat.com> 3.6.0-1
-- llvm 3.6.0 final
+* Sat Feb 13 2016 Dave Airlie <airlied@redhat.com> 3.7.1-6
+- export C++ API for mesa.
 
-* Mon Feb 23 2015 Adam Jackson <ajax@redhat.com> 3.6.0-0.1
-- llvm 3.6.0 rc4
+* Sat Feb 13 2016 Dave Airlie <airlied@redhat.com> 3.7.1-5
+- reintroduce llvm-static, clang needs it currently.
 
-* Tue Sep 09 2014 Dave Airlie <airlied@redhat.com> 3.5.0-1
-- llvm 3.5.0 final
+* Fri Feb 12 2016 Dave Airlie <airlied@redhat.com> 3.7.1-4
+- jump back to single llvm library, the split libs aren't working very well.
 
-* Wed Aug 27 2014 Adam Jackson <ajax@redhat.com> 3.5.0-0.1.rc3
-- llvm 3.5.0 RC3
+* Fri Feb 05 2016 Dave Airlie <airlied@redhat.com> 3.7.1-3
+- add missing obsoletes (#1303497)
 
-* Wed Aug 27 2014 Dave Airlie <airlied@redhat.com> 3.4.2-1
-- llvm 3.4.2 for RHEL 7.1
+* Thu Feb 04 2016 Fedora Release Engineering <releng@fedoraproject.org> - 3.7.1-2
+- Rebuilt for https://fedoraproject.org/wiki/Fedora_24_Mass_Rebuild
 
-* Tue Jan 28 2014 Adam Jackson <ajax@redhat.com> 3.3-0.8.20131023
-- Disable %%check, only fails in places that don't matter to Mesa (#1028575)
+* Thu Jan 07 2016 Jan Vcelak <jvcelak@fedoraproject.org> 3.7.1-1
+- new upstream release
+- enable gold linker
 
-* Fri Jan 24 2014 Daniel Mach <dmach@redhat.com> - 3.3-0.7.20131023
-- Mass rebuild 2014-01-24
+* Wed Nov 04 2015 Jan Vcelak <jvcelak@fedoraproject.org> 3.7.0-100
+- fix Requires for subpackages on the main package
 
-* Fri Dec 27 2013 Daniel Mach <dmach@redhat.com> - 3.3-0.6.20131023
-- Mass rebuild 2013-12-27
-
-* Wed Oct 23 2013 Jerome Glisse <jglisse@redhat.com> 3.3-0.5.20131023
-- 3.3.1 snapshot
-
-* Tue Aug 20 2013 Adam Jackson <ajax@redhat.com> 3.3-0.4.rc3
-- Build with -fno-strict-aliasing
-
-* Tue Jun 18 2013 Adam Jackson <ajax@redhat.com> 3.3-0.3.rc3
-- Port to RHEL6
-- Don't bother building R600 on s390x
-
-* Tue Jun 11 2013 Adam Jackson <ajax@redhat.com> 3.3-0.2.rc3
-- 3.3 rc3
-- Drop tblgen
-- Strip out some headers
-
-* Tue May 14 2013 Adam Jackson <ajax@redhat.com> 3.3-0.1.rc1
-- Update to 3.3 rc1
-- Move library to %%{_libdir} to avoid rpath headaches
-- Link with -Bsymbolic and --default-symver
-- --disable-libffi
-- Misc spec cleanup
-
-* Wed Dec 05 2012 Adam Jackson <ajax@redhat.com> 3.1-13
-- Forked spec for RHEL7 Mesa's private use
-  - no ocaml support
-  - no doxygen build
-  - no clang support
-  - no static archives
-  - no libraries, binaries, or manpages not needed by Mesa
+* Tue Oct 06 2015 Jan Vcelak <jvcelak@fedoraproject.org> 3.7.0-100
+- initial version using cmake build system
