@@ -34,21 +34,20 @@ ExcludeArch: ppc s390 %{?rhel6:s390x}
 %endif
 
 Name:		mesa-private-llvm
-Version:	3.8.1
-Release:	1%{?dist}
+Version:	3.9.1
+Release:	3%{?dist}
 Summary:	llvm engine for Mesa
 
 Group:          System Environment/Libraries
 License:	NCSA
 URL:		http://llvm.org
 Source0:	http://llvm.org/releases/%{version}/llvm-%{version}.src.tar.xz
+Source1:        cmake-3.4.3.tar.gz
 Source100:	llvm-config.h
 
-# recognize s390 as SystemZ when configuring build
-#Patch0:		llvm-3.7.1-cmake-s390.patch
-
 Patch1: fix-cmake-include.patch
-Patch2: llvm-3.8.1-rhel-7.3.patch
+Patch2: 0001-Revert-Merging-r280589.patch
+Patch3: 0001-Revert-InstCombine-transform-bitcasted-bitwise-logic.patch
 
 BuildRequires:	cmake
 BuildRequires:	zlib-devel
@@ -73,17 +72,30 @@ support in Mesa.
 
 %prep
 %setup -q -n llvm-%{version}.src
-#patch0 -p1 -b .s390
+
+tar xf %{SOURCE1}
+
 %patch1 -p1 -b .fixinc
-%patch2 -p1
+%patch2 -p1 -b .radeonsi-fix
+%patch3 -p1 -b .bigendian-fix
 
 %build
+
+BUILD_DIR=`pwd`/cmake_build
+cd cmake-3.4.3
+cmake . -DCMAKE_INSTALL_PREFIX=$BUILD_DIR
+make
+make install
+cd -
+
 
 sed -i 's|ActiveIncludeDir = ActivePrefix + "/include|&/mesa-private|g' tools/llvm-config/llvm-config.cpp
 
 mkdir -p _build
 cd _build
 
+export PATH=$BUILD_DIR/bin:$PATH
+%global __cmake $BUILD_DIR/bin/cmake
 # force off shared libs as cmake macros turns it on.
 %cmake .. \
 	-DINCLUDE_INSTALL_DIR=%{_includedir}/mesa-private \
@@ -163,6 +175,7 @@ rm -rf %{buildroot}%{_includedir}/llvm-c/lto.h
 
 # RHEL: Strip out cmake build foo
 rm -rf %{buildroot}%{_datadir}/llvm/cmake
+rm -rf %{buildroot}%{_libdir}/cmake/llvm
 
 %check
 cd _build
@@ -176,7 +189,7 @@ make check-all || :
 
 %files
 %doc LICENSE.TXT
-%{_libdir}/libLLVM-3.8*-mesa.so
+%{_libdir}/libLLVM-3.9*-mesa.so
 
 %files devel
 %{_bindir}/%{name}-config-%{__isa_bits}
@@ -184,6 +197,15 @@ make check-all || :
 %{_includedir}/mesa-private/llvm-c
 
 %changelog
+* Wed May 03 2017 Lyude Paul <lyude@redhat.com> - 3.9.1-3
+- Add temporary revert for #1445423
+
+* Fri Mar 24 2017 Tom Stellard <tstellar@redhat.com> - 3.9.1-2
+- Add fix for radeonsi regression
+
+* Tue Jan 10 2017 Jeff Law  <law@redhat.com> - 3.9.1-1
+- Update to 3.9.1
+
 * Wed Jul 13 2016 Adam Jackson <ajax@redhat.com> - 3.8.1-1
 - Update to 3.8.1
 - Sync some x86 getHostCPUName updates from trunk
