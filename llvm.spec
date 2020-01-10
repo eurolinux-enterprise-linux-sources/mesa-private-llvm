@@ -6,18 +6,18 @@
 # consequently we build swrast on them instead of llvmpipe.
 ExcludeArch: ppc s390 %{?rhel6:s390x}
 
-#%global svndate 20131023
-#global prerel rc3
+#global svndate 20131023
+#global prerel rc4
 
 Name:           mesa-private-llvm
-Version:        3.5.0
-Release:        1%{?dist}
+Version:        3.6.2
+Release:        2%{?prerel:.%prerel}%{?dist}
 Summary:        llvm engine for Mesa
 
 Group:		System Environment/Libraries
 License:        NCSA
 URL:            http://llvm.org/
-Source0:	http://llvm.org/pre-releases/3.5/llvm-3.5.0.src.tar.xz
+Source0:	http://llvm.org/releases/%{version}/%{?prerel}/llvm-%{version}%{?prerel}.src.tar.xz
 #Source0:	llvm-%{svndate}.tar.xz
 Source1:	make-llvm-snapshot.sh
 # multilib fixes
@@ -26,7 +26,15 @@ Source3:        llvm-Config-llvm-config.h
 
 # Data files should be installed with timestamps preserved
 Patch0:         llvm-2.6-timestamp.patch
-Patch1:		llvm-3.5.0-build-fix.patch
+
+# llvm Z13 backports (#1182150)
+Patch1: llvm-z13-backports.patch
+Patch2: llvm-3.6-large-struct-return.patch
+
+# llvm aarch64 bug fix (#1254386)
+Patch10: 0001-AArch64-Fix-invalid-use-of-references-to-BuildMI.patch
+# add model detection for skylake and broadwell
+Patch11: llvm-3.6.2-nerf-skylake.patch
 
 BuildRequires:  bison
 BuildRequires:  chrpath
@@ -59,7 +67,10 @@ rm -r -f tools/clang
 
 # llvm patches
 %patch0 -p1 -b .timestamp
-%patch1 -p1 -b .build
+%patch1 -p1 -b .z13
+%patch2 -p1 -b .large-struct
+%patch10 -p1 -b .aarch64-fix
+%patch11 -p1 -b .skl-fix
 
 # fix ld search path
 sed -i 's|/lib /usr/lib $lt_ld_extra|%{_libdir} $lt_ld_extra|' \
@@ -94,14 +105,6 @@ export CXX=g++
   --disable-libffi \
   --disable-terminfo \
   --disable-timestamps \
-%ifarch armv7hl armv7l
-  --with-cpu=cortex-a8 \
-  --with-tune=cortex-a8 \
-  --with-arch=armv7-a \
-  --with-float=hard \
-  --with-fpu=vfpv3-d16 \
-  --with-abi=aapcs-linux \
-%endif
   %{nil}
 
 # FIXME file this
@@ -122,9 +125,6 @@ make install DESTDIR=%{buildroot}
 
 # rename the few binaries we're keeping
 mv %{buildroot}%{_bindir}/llvm-config %{buildroot}%{_bindir}/%{name}-config-%{__isa_bits}
-
-# silly
-rm -f %{buildroot}%{_libdir}/llvm-3.5.0.so
 
 pushd %{buildroot}%{_includedir}/mesa-private/llvm/Config
 mv config.h config-%{__isa_bits}.h
@@ -156,7 +156,7 @@ rm -rf %{buildroot}%{_mandir}/man1
 
 # RHEL: Strip out some headers Mesa doesn't need
 rm -rf %{buildroot}%{_includedir}/mesa-private/llvm/{Analysis,Assembly}
-rm -rf %{buildroot}%{_includedir}/mesa-private/llvm/{DebugInfo,Object,Option}
+rm -rf %{buildroot}%{_includedir}/mesa-private/llvm/{DebugInfo,Option}
 rm -rf %{buildroot}%{_includedir}/mesa-private/llvm/TableGen
 
 # RHEL: Strip out cmake build foo
@@ -175,7 +175,7 @@ make check LIT_ARGS="-v -j4" | tee llvm-testlog-%{_arch}.txt
 %files
 %defattr(-,root,root,-)
 %doc LICENSE.TXT
-%{_libdir}/libLLVM-3.5-mesa.so
+%{_libdir}/libLLVM-3.6-mesa.so
 
 %files devel
 %defattr(-,root,root,-)
@@ -184,6 +184,30 @@ make check LIT_ARGS="-v -j4" | tee llvm-testlog-%{_arch}.txt
 %{_includedir}/mesa-private/llvm-c
 
 %changelog
+* Wed Oct 14 2015 Adam Jackson <ajax@redhat.com> 3.6.2-2
+- Teach CPU detection about Skylake/Broadwell, treat them like Haswell
+
+* Mon Aug 24 2015 Dave Airlie <airlied@redhat.com> 3.6.2-1
+- fix aarch64 bugs via 3.6.2 + patch
+
+* Tue Aug 18 2015 Adam Jackson <ajax@redhat.com> 3.6.1-2
+- Fix large struct return on s390
+
+* Tue May 26 2015 Dave Airlie <airlied@redhat.com> 3.6.1-1
+- rebase to llvm 3.6.1
+
+* Thu May 21 2015 Dave Airlie <airlied@redhat.com> 3.6.0-3
+- backport llvm z13 support from IBM
+
+* Wed May 13 2015 Dave Airlie <airlied@redhat.com> 3.6.0-2
+- mesa needs Object headers now.
+
+* Wed May 13 2015 Dave Airlie <airlied@redhat.com> 3.6.0-1
+- llvm 3.6.0 final
+
+* Mon Feb 23 2015 Adam Jackson <ajax@redhat.com> 3.6.0-0.1
+- llvm 3.6.0 rc4
+
 * Tue Sep 09 2014 Dave Airlie <airlied@redhat.com> 3.5.0-1
 - llvm 3.5.0 final
 
